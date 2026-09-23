@@ -8,7 +8,7 @@ from transformers import TrainingArguments
 
 def main():
     print("Loading data for finetuning...")
-    df = pd.read_csv("../operator_sessions.csv")
+    df = pd.read_csv("../caterpillar/operator_sessions.csv")
     
     # Take 2000 rows as requested
     df_sample = df.sample(n=2000, random_state=42)

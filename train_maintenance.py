@@ -21,7 +21,7 @@ def assign_component(row):
 
 def main():
     print("Loading data...")
-    df = pd.read_csv("../operator_sessions.csv")
+    df = pd.read_csv("../caterpillar/operator_sessions.csv")
 
     # Target 1: Hours until next service (regression)
     df['HoursUntilService'] = np.clip(500 - (df['EngineHours'] - df['LastServiceHours']), 0, 500)
