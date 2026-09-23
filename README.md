@@ -1,33 +1,38 @@
-# CAT Smart Operator — Models
+# CAT Smart Operator — ML Models
 
-Trained LightGBM models and label encoders for the CAT Smart Operator Assistant.
+Three trained models for the CAT Smart Operator platform.
 
 ## Models
 
-| File | Type | Metric |
-|---|---|---|
-| `anomaly_detector.txt` | LightGBM multiclass | F1-macro 0.994 |
-| `task_estimator.txt` | LightGBM regression | RMSE 5.15 min |
-| `maintenance_hours_predictor.txt` | LightGBM regression | MAE 1.2 h |
-| `maintenance_component_predictor.txt` | LightGBM multiclass | Acc 0.94 |
+| Model | Algorithm | File | Metric |
+|---|---|---|---|
+| Task Time Predictor | Random Forest + XGBoost Ensemble | `task_time_model.joblib` + `xgb_task_model.joblib` | MAE 20 min (XGB), 25 min (RF) |
+| Anomaly Classifier | LightGBM | `anomaly_model.joblib` | F1-macro 0.9947 |
+| Maintenance Predictor | LightGBM | `maintenance_model.joblib` | MAE 81 hours |
 
-## Label Encoders
+## Anomaly Classes (7)
+`NORMAL`, `EXCESSIVE_IDLE`, `OVER_REV`, `HIGH_PRESSURE`, `OVERHEAT`, `SEATBELT_VIOLATION`, `PROXIMITY_BREACH`
 
-`le_target.pkl`, `le_task.pkl`, `le_weather.pkl`, `le_soil.pkl`, `le_seatbelt.pkl`, `le_operator.pkl`, `le_component.pkl`
+## Dataset
+- `data/tasks.csv` — 2,000 rows, 27 columns
+- `data/machine_logs.csv` — 2,000 rows, 21 columns
 
-## Retrain from scratch
+## Retrain
 
 ```bash
-# Generate dataset
-cd data && python generate_dataset.py
-
-# Train all models
-cd ../models
+pip install scikit-learn xgboost lightgbm pandas numpy joblib
+python generate_data.py
+python train_task.py
 python train_anomaly.py
-python train_estimator.py
 python train_maintenance.py
 ```
 
-## Dataset
+## API Endpoints (served via caterpillar-stack)
 
-`operator_sessions.csv` — 10,000 synthetic rows, 36 columns, 7 anomaly classes balanced (~500 each).
+```
+POST https://caterpillar-stack.onrender.com/api/predict
+POST https://caterpillar-stack.onrender.com/api/anomaly/detect
+GET  https://caterpillar-stack.onrender.com/api/anomaly/scan
+POST https://caterpillar-stack.onrender.com/api/maintenance/predict
+GET  https://caterpillar-stack.onrender.com/api/maintenance/status
+```

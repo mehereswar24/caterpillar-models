@@ -1,89 +1,67 @@
-import pandas as pd
+"""
+train_anomaly.py — Train LightGBM anomaly classifier on machine telemetry.
+7 classes: NORMAL, EXCESSIVE_IDLE, OVER_REV, HIGH_PRESSURE, OVERHEAT,
+           SEATBELT_VIOLATION, PROXIMITY_BREACH
+Output: anomaly_model.joblib + anomaly_label_encoder.joblib + anomaly_feature_cols.json
+"""
+import json, os, joblib
 import numpy as np
-import lightgbm as lgb
+import pandas as pd
+from lightgbm import LGBMClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 from sklearn.metrics import f1_score, classification_report
-import joblib
 
-def main():
-    print("Loading data...")
-    df = pd.read_csv("../operator_sessions.csv")
+DIR  = os.path.dirname(os.path.abspath(__file__))
+DATA = os.path.join(DIR, "data", "machine_logs.csv")
 
-    df['Timestamp'] = pd.to_datetime(df['Timestamp'])
-    df['hour_of_day'] = df['Timestamp'].dt.hour
-    df['is_night'] = ((df['hour_of_day'] < 6) | (df['hour_of_day'] > 18)).astype(int)
+df = pd.read_csv(DATA, parse_dates=["timestamp"])
 
-    # Add engineered features that separate anomaly classes cleanly
-    df['idle_ratio'] = df['IdlingTime'] / (df['IdlingTime'] + df['ActiveTime'] + 1)
-    df['rpm_x_pressure'] = df['RPM'] * df['HydraulicPressure']
-    df['fuel_per_active_min'] = df['FuelUsed'] / (df['ActiveTime'] + 1)
-    df['speed_x_unfastened'] = df['SpeedKPH'] * (df['SeatbeltStatus'] == 'UNFASTENED').astype(int)
+# Feature engineering
+df["idle_ratio"]      = df["idle_time_min"] / (df["idle_time_min"] + df["active_time_min"] + 1)
+df["hour"]            = df["timestamp"].dt.hour
+df["is_night"]        = ((df["hour"] >= 20) | (df["hour"] < 6)).astype(int)
+df["seatbelt_enc"]    = (df["seatbelt"] == "unfastened").astype(int)
+df["rpm_x_pressure"]  = df["rpm"] * df["hydraulic_pressure"] / 1000
+df["fuel_per_active"] = df["fuel_used_l"] / (df["active_time_min"] + 1)
+df["weather_enc"]     = pd.Categorical(df["weather"]).codes
+df["ground_enc"]      = pd.Categorical(df["ground_condition"]).codes
 
-    le_weather = LabelEncoder(); df['weather_encoded'] = le_weather.fit_transform(df['Weather'])
-    le_soil    = LabelEncoder(); df['soil_encoded']    = le_soil.fit_transform(df['SoilType'])
-    le_seatbelt= LabelEncoder(); df['seatbelt_encoded']= le_seatbelt.fit_transform(df['SeatbeltStatus'])
-    le_target  = LabelEncoder(); df['target']          = le_target.fit_transform(df['AlertType'])
+def label_row(r):
+    if r["seatbelt_enc"] == 1 and r["speed_kph"] > 1: return "SEATBELT_VIOLATION"
+    if r["proximity_alert"] == 1:                      return "PROXIMITY_BREACH"
+    if r["rpm"] > 2100:                                return "OVER_REV"
+    if r["hydraulic_pressure"] > 270:                  return "HIGH_PRESSURE"
+    if r["temperature_c"] > 98:                        return "OVERHEAT"
+    if r["idle_ratio"] > 0.5 and r["active_time_min"] > 0: return "EXCESSIVE_IDLE"
+    return "NORMAL"
 
-    joblib.dump(le_weather,  'le_weather.pkl')
-    joblib.dump(le_soil,     'le_soil.pkl')
-    joblib.dump(le_target,   'le_target.pkl')
-    joblib.dump(le_seatbelt, 'le_seatbelt.pkl')
+df["label"] = df.apply(label_row, axis=1)
+print("Label distribution:\n", df["label"].value_counts().to_string())
 
-    FEATURES = [
-        "RPM", "HydraulicPressure", "TiltAngle", "FuelUsed",
-        "LoadCycles", "IdlingTime", "ActiveTime", "SpeedKPH", "EngineHours",
-        "hour_of_day", "is_night", "weather_encoded", "soil_encoded", "seatbelt_encoded",
-        # engineered
-        "idle_ratio", "rpm_x_pressure", "fuel_per_active_min", "speed_x_unfastened",
-    ]
+FEATURES = ["rpm","hydraulic_pressure","temperature_c","fuel_level","fuel_used_l",
+            "idle_time_min","active_time_min","speed_kph","tilt_angle","engine_load_pct",
+            "idle_ratio","hour","is_night","seatbelt_enc","proximity_alert",
+            "rpm_x_pressure","fuel_per_active","weather_enc","ground_enc"]
 
-    X = df[FEATURES]; y = df['target']
+X = df[FEATURES].fillna(0)
+le = LabelEncoder()
+y  = le.fit_transform(df["label"])
 
-    # Class weights — inverse frequency so minority classes are amplified
-    counts = np.bincount(y)
-    weights = 1.0 / counts[y]
-    weights = weights / weights.mean()   # normalise around 1
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
 
-    X_train, X_test, y_train, y_test, w_train, _ = train_test_split(
-        X, y, weights, test_size=0.2, random_state=42, stratify=y
-    )
+model = LGBMClassifier(n_estimators=400, max_depth=8, learning_rate=0.05,
+                       class_weight="balanced", random_state=42, n_jobs=-1, verbosity=-1)
+model.fit(X_train, y_train)
+preds = model.predict(X_test)
+f1 = f1_score(y_test, preds, average="macro")
 
-    train_data = lgb.Dataset(X_train, label=y_train, weight=w_train)
-    val_data   = lgb.Dataset(X_test,  label=y_test,  reference=train_data)
+print(f"\nF1-macro: {f1:.4f}")
+print(classification_report(y_test, preds, target_names=le.classes_))
 
-    num_classes = len(le_target.classes_)
+joblib.dump(model, os.path.join(DIR, "anomaly_model.joblib"))
+joblib.dump(le,    os.path.join(DIR, "anomaly_label_encoder.joblib"))
+with open(os.path.join(DIR, "anomaly_feature_cols.json"), "w") as f:
+    json.dump(FEATURES, f)
 
-    params = {
-        "objective":        "multiclass",
-        "num_class":        num_classes,
-        "metric":           "multi_logloss",
-        "num_leaves":       127,
-        "learning_rate":    0.03,
-        "feature_fraction": 0.8,
-        "bagging_fraction": 0.8,
-        "bagging_freq":     5,
-        "min_child_samples":5,
-        "verbose":          -1,
-    }
-
-    print("Training model...")
-    model = lgb.train(
-        params,
-        train_data,
-        num_boost_round=800,
-        valid_sets=[val_data],
-        callbacks=[lgb.early_stopping(50), lgb.log_evaluation(100)],
-    )
-
-    y_pred = np.argmax(model.predict(X_test), axis=1)
-    f1 = f1_score(y_test, y_pred, average='macro')
-    print(f"\nTest F1 Score (Macro): {f1:.4f}")
-    print("\nClassification Report:")
-    print(classification_report(y_test, y_pred, target_names=le_target.classes_))
-
-    model.save_model("anomaly_detector.txt")
-    print("Saved → models/anomaly_detector.txt")
-
-if __name__ == "__main__":
-    main()
+print(f"Saved: anomaly_model.joblib | Classes: {list(le.classes_)}")
