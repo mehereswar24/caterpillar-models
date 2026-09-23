@@ -8,7 +8,7 @@ import joblib
 
 def main():
     print("Loading data...")
-    df = pd.read_csv("../caterpillar/operator_sessions.csv")
+    df = pd.read_csv("../operator_sessions.csv")
     
     # Target and Features
     target = 'TaskDuration'
