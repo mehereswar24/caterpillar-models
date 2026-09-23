@@ -1,0 +1,1 @@
+["engine_hours", "rpm", "hydraulic_pressure", "temperature_c", "fuel_level", "fuel_used_l", "idle_time_min", "active_time_min", "engine_load_pct", "tilt_angle", "speed_kph", "idle_ratio", "rpm_x_pressure", "fuel_per_active", "weather_enc", "ground_enc", "fault_enc"]
